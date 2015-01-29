@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
 using System.Diagnostics;
@@ -8,30 +9,47 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web;
+using System.Web.Hosting;
+using System.Xml;
 
 namespace WebApplication1
 {
     public class ProcesoLCO
     {
+        string DirPath;
+        List<Contribuyente> _lista;
+
         public void Main() {
+            DirPath = HostingEnvironment.ApplicationPhysicalPath;
+            DirPath += @"Files\";
             string[] dwFiles = new string[4] { "A1.gz", "A2.gz", "A3.gz", "A4.gz" };
             string[] XMLFiles = new string[4] { "A1.xml", "A2.xml", "a3.xml", "a4.xml" };
             string[] XMLFiles1 = new string[4] { "lco1.xml", "lco2.xml", "lco3.xml", "lco4.xml" };
-            ////Stopwatch stopWatch = new Stopwatch();
-            ////stopWatch.Start();
             ChangeState(true);
+            this.WriteLog("STEP", "START");
+
+            WriteLog("STEP", "dw");
             if (!DownloadFiles(dwFiles)) return;
+
+            WriteLog("STEP", "unzip");
             if(!unzipFiles(dwFiles))return;
+
+            WriteLog("STEP", "clean");
             if(!CleaningFiles(XMLFiles, XMLFiles1)) return;
-            if(!ExecuteSP()) return;
-            ////stopWatch.Stop();
-            ////TimeSpan ts = stopWatch.Elapsed;
-            ////var elapsedTime = String.Format("{0:00}:{1:00}:{2:00}.{3:00}", ts.Hours, ts.Minutes, ts.Seconds, ts.Milliseconds / 10);
+
+            WriteLog("STEP", "xmlwrite");
+            foreach(string fPath in XMLFiles1){
+                if (!LoadXML2List(fPath)) return;
+                if(!CreaXML(DirPath + "final.txt")) return;
+            }
+            //if(!ExecuteSP()) return;
+            if (!spExecute("spExecuteBULK")) return;
+            this.WriteLog("STEP", "DONE");
         }
         bool DownloadFiles(string[] nombres)
         {
-            string DirPath = @"D:\GITHUB\";
             string _url = @"http://www.gestionix.com/Zip/";
             using (WebClient ClienteWeb = new WebClient())
             {
@@ -46,7 +64,7 @@ namespace WebApplication1
                 }
                 catch (Exception ex)
                 {
-                    WriteLog("Download "+ex.Message);
+                    WriteLog("ERROR", "Download "+ex.Message);
                 }
             }
             ChangeState(false);
@@ -54,14 +72,12 @@ namespace WebApplication1
         }
         bool unzipFiles(string[] nombres)
         {
-            string DirPath;
+            
             for (int i = 0; i < nombres.Length; i++)
             {
-                DirPath = @"D:\GITHUB\";
-                DirPath += nombres[i];
                 try
                 {
-                    FileInfo archivo = new FileInfo(DirPath);
+                    FileInfo archivo = new FileInfo(DirPath + nombres[i]);
                     FileStream ArchivoOriginal = archivo.OpenRead();
                     string NombreArchivo = archivo.FullName;
                     string NuevoNombre = NombreArchivo.Remove(NombreArchivo.Length - archivo.Extension.Length);
@@ -71,7 +87,7 @@ namespace WebApplication1
                 }
                 catch (Exception e)
                 {
-                    WriteLog("Unzip " + e.Message);
+                    WriteLog("ERROR","Unzip " + e.Message);
                     ChangeState(false);
                     return false;
                 }
@@ -82,7 +98,7 @@ namespace WebApplication1
         {
             try
             {
-                System.Diagnostics.ProcessStartInfo procStartInfo = new System.Diagnostics.ProcessStartInfo("cmd", "/c " + _Command);
+                System.Diagnostics.ProcessStartInfo procStartInfo = new System.Diagnostics.ProcessStartInfo("cmd", "/c " + @_Command);
                 procStartInfo.RedirectStandardOutput = true;
                 procStartInfo.UseShellExecute = false;
                 procStartInfo.CreateNoWindow = false;
@@ -94,18 +110,23 @@ namespace WebApplication1
             }
             catch (Exception e)
             {
-                WriteLog("Exec Command " + e.Message);
+                WriteLog("ERROR","Exec Command " + e.Message);
             }
             ChangeState(false);
             return false;
         }
         bool CleaningFiles(string[] xml, string[] nombres)
         {
-            string DirPath = @"D:\GITHUB\";
-            Thread.Sleep(100);
+            Thread.Sleep(1000);
+            string DirOpenSSL = ConfigurationManager.AppSettings["Ruta"];
             for (int i = 0; i < xml.Length; i++)
             {
-                if (!ExecuteCommand(@"D:\GITHUB\openssl\openssl smime -decrypt -verify -inform DER -in " + DirPath + xml[i] + " -noverify -out " + DirPath + nombres[i])) ChangeState(false); return false; 
+                string cmd = DirOpenSSL + "openssl smime -decrypt -verify -inform DER -in " + DirPath + xml[i] + " -noverify -out " + DirPath + nombres[i];
+                if (!ExecuteCommand(cmd)) 
+                { 
+                    ChangeState(false); 
+                    return false; 
+                }
             }
             return true;
         }
@@ -118,46 +139,137 @@ namespace WebApplication1
             SPNames.Add("XMLIMPORT4");
             foreach (String _SP in SPNames)
             {
-                if (!spExecute(_SP)) ChangeState(false);  return false;
+                if (!spExecute(_SP)) { 
+                    ChangeState(false); 
+                    return false; 
+                }
             }
             return true;
         }
         bool spExecute(string spName)
         {
-            string connectionString = @"Data Source = NTBOOK ; Initial Catalog = lcd; Integrated Security = true";
+            string connectionString = ConfigurationManager.ConnectionStrings["conexionLCD"].ConnectionString;
             using (SqlConnection dbcon1 = new SqlConnection(connectionString))
             {
                 try
                 {
                     SqlCommand comand = new SqlCommand(spName, dbcon1);
-                    comand.CommandTimeout = 0;
+                    comand.CommandTimeout = 200;
                     comand.CommandType = CommandType.StoredProcedure;
                     dbcon1.Open();
-                    WriteLog("SP Executing " + spName);
+                    WriteLog("STEP","SP Executing " + spName);
                     comand.ExecuteNonQuery();
                     comand.Dispose();
                 }
                 catch (Exception ex)
                 {
-                    WriteLog("SP Exec " + ex.Message);
+                    WriteLog("ERROR", "SP Exec " + ex.Message);
                     ChangeState(false);
                     return false;
                 }
             }
             return true;
         }
-        void WriteLog(string linea) {
-            string fic = @"D:\GITHUB\log.txt";
+        void WriteLog(string type, string linea) 
+        {
+            string fic = DirPath+"log.txt";
             System.IO.StreamWriter sw = new System.IO.StreamWriter(fic,true);
-            sw.WriteLine(DateTime.Now.ToString() + " ERROR: " + linea);
+            sw.WriteLine(DateTime.Now.ToString() +" "+ type+ ": "+ linea);
             sw.Close();
         }
         void ChangeState(bool state)
         {
-            string fic = @"D:\GITHUB\status.txt";
+            string fic = DirPath+"status.txt";
             System.IO.StreamWriter sw = new System.IO.StreamWriter(fic);
             sw.WriteLine(state);
             sw.Close();
+        }
+        bool LoadXML2List(string file)
+        {
+            Contribuyente Persona;
+            _lista = new List<Contribuyente>();
+            string _rfc, _ValidezObligaciones, _EstatusVerficado, _noCertificado, _fInicio, _fFinal = "";
+            try
+            {
+                using (XmlTextReader reader = new XmlTextReader(DirPath+file))
+                {
+                    _rfc = "";
+                    reader.MoveToContent();
+                    while (reader.Read())
+                    {
+                        _ValidezObligaciones = "";
+                        _EstatusVerficado = "";
+                        _noCertificado = "";
+                        _fInicio = "";
+                        _fFinal = "";
+                        if ((reader.NodeType == XmlNodeType.Element) && (reader.Name == "lco:Contribuyente"))
+                        {
+                            _rfc = reader.GetAttribute(0);
+                        }
+                        if ((reader.NodeType == XmlNodeType.Element) && (reader.Name == "lco:Certificado"))
+                        {
+                            _ValidezObligaciones = reader.GetAttribute(0);
+                            _EstatusVerficado = reader.GetAttribute(1);
+                            _noCertificado = reader.GetAttribute(2);
+                            _fFinal = reader.GetAttribute(3);
+                            _fInicio = reader.GetAttribute(4);
+                            Persona = new Contribuyente(_rfc, _ValidezObligaciones, _EstatusVerficado, _noCertificado, _fFinal, _fInicio);
+                            _lista.Add(Persona);
+                        }
+                    }
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                return false;
+            }
+    }
+        public bool CreaXML(string FilePath)
+        {
+            try
+            {
+                using (System.IO.StreamWriter sw = new System.IO.StreamWriter(FilePath, true))
+                {
+                    foreach (Contribuyente persona in _lista)
+                    {
+                        sw.WriteLine(persona.ToString());
+                    }
+                    sw.Close();
+                }
+                _lista = null;
+                return true;
+            }catch(Exception e){
+                WriteLog("ERROR","WRITE TEXT "+e.Message);
+            }
+            _lista = null;
+            return false;
+        }
+    }
+    public class Contribuyente
+    {
+        public string _RFC;
+        public string _ValidezObligaciones;
+        public string _EstatusVerficado;
+        public string _noCertificado;
+        public string _fInicio;
+        public string _fFinal;
+        public Contribuyente()
+        {
+            _RFC = null;
+        }
+        public Contribuyente(string RFC, string ValidezObligaciones, string EstatusVerficado, string noCertificado, string fFinal, string fInicio)
+        {
+            _RFC = RFC;
+            _ValidezObligaciones = ValidezObligaciones;
+            _EstatusVerficado = EstatusVerficado;
+            _noCertificado = noCertificado;
+            _fInicio = fInicio;
+            _fFinal = fFinal;
+        }
+        public override string ToString()
+        {
+            return _RFC + "|" + _ValidezObligaciones + "|" + _EstatusVerficado + "|" + _noCertificado + "|" + _fFinal + "|" + _fInicio;
         }
     }
 }

@@ -25,19 +25,25 @@ namespace WSLocal
         
         void CallServicioWeb()
         {
-            int hora = int.Parse(ConfigurationManager.AppSettings["hora"]);
-            int minutos = int.Parse(ConfigurationManager.AppSettings["minutos"]);
-            if (DateTime.Now.Hour == hora && DateTime.Now.Minute == minutos)
+            try
             {
-                WS.WSLCOSoapClient ws = new WS.WSLCOSoapClient();
-                int i = 0;
-                do
+                int hora = int.Parse(ConfigurationManager.AppSettings["hora"]);
+                int minutos = int.Parse(ConfigurationManager.AppSettings["minutos"]);
+                if (DateTime.Now.Hour == hora && DateTime.Now.Minute == minutos)
                 {
-                    EventLog.WriteEntry("WSService EJECUTANDOSE "+DateTime.Now.ToString());
-                    if (!ws.GetStatus()) ws.UpdateLCO();
-                    System.Threading.Thread.Sleep(300000);
-                    i++;
-                } while ( i < 4);
+                    WS.WSLCOSoapClient ws = new WS.WSLCOSoapClient();
+                    int i = 0;
+                    ws.UpdateLCO();
+                    do
+                    {
+                        EventLog.WriteEntry("WSService EJECUTANDOSE " + DateTime.Now.ToString());
+                        if (!ws.GetStatus()) ws.UpdateLCO();
+                        System.Threading.Thread.Sleep(300000);
+                        i++;
+                    } while (i < 3);
+                }
+            }catch(Exception e){
+                EventLog.WriteEntry("WSService ERROR " + e.Message);
             }
         }
         void myTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
